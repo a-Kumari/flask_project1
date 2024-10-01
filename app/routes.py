@@ -1,4 +1,4 @@
-from .models import User, Product
+from .models import User, Product, Order
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, get_jwt
@@ -109,6 +109,20 @@ def delete_product(id):
     else:
         return jsonify({'error': 'Product not found or you do not have permission to update it'}), 403
 
-
-
-    
+@bp.route('orders', methods=['POST'])
+@jwt_required()
+def place_order():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if user.role == 'buyer':
+        data = request.get_json()
+        order = Order(
+            product_id = data['product_id'],
+            quantity = data['quantity'],
+            customer_name = user.username
+        )
+        db.session.add(order)
+        db.session.commit()
+        return jsonify({"msg": "Order placed successfully"}), 201
+    else:
+        return jsonify({"msg": "Unauthorized: Only buyers can place orders"}), 403

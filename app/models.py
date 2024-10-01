@@ -1,4 +1,6 @@
 from app import db
+import datetime
+
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True, index=True)
@@ -26,3 +28,22 @@ class Product(db.Model):
             'desc': self.desc,
             'price': self.price
         }
+
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'))
+    quantity = db.Column(db.Integer)
+    customer_name = db.Column(db.String(100)) # use id of user table instead of customername
+    created_at = db.Column(db.DateTime, default=datetime.datetime.now)
+    product = db.relationship('Product', backref='orders')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'quantity': self.quantity,
+            'customer_name': self.customer_name
+        }
+
+    def __repr__(self):
+        return f'<Order {self.customer_name}>'

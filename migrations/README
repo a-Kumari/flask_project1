@@ -1,1 +1,9 @@
-Single-database configuration for Flask.
+# Single-database configuration for Flask.
+# @bp.route('get_order', methods=['GET'])
+# @jwt_required()
+# def get_order():
+#     user_id = get_jwt_identity()
+#     product_order = Order.query.filter_by(product__user_id = user_id)
+#     order = [order.to_dict() for order in product_order]
+    # return jsonify(order)
+    
