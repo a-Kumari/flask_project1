@@ -19,7 +19,7 @@ class Product(db.Model):
     name= db.Column(db.String, nullable=False)
     desc = db.Column(db.String, nullable=False)
     price = db.Column(db.Float, nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    seller_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
     def to_dict(self):
         return {
@@ -33,7 +33,7 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'))
     quantity = db.Column(db.Integer)
-    customer_name = db.Column(db.String(100)) # use id of user table instead of customername
+    buyer_id = db.Column(db.Integer, db.ForeignKey('user.id')) # use id of user table instead of customername
     created_at = db.Column(db.DateTime, default=datetime.datetime.now)
     product = db.relationship('Product', backref='orders')
 
@@ -42,8 +42,14 @@ class Order(db.Model):
             'id': self.id,
             'product_id': self.product_id,
             'quantity': self.quantity,
-            'customer_name': self.customer_name
+            'buyer_id': self.buyer_id
         }
 
     def __repr__(self):
-        return f'<Order {self.customer_name}>'
+        return f'<Order {self.buyer_id}>'
+
+class CartItem(db. Model):
+    id = db.Column(db.Integer, primary_key=True, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    buyer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
