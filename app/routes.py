@@ -1,8 +1,8 @@
 from .models import User, Product, Order, CartItem
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, get_jwt
-
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from datetime import datetime
 from flask import request, jsonify, Blueprint
 
 bp = Blueprint('main', __name__)
@@ -51,6 +51,7 @@ def create_product():
             name=data['name'],
             desc=data['desc'],
             price=data['price'],
+            stock=data['stock'],
             seller_id=user_id
         )
         db.session.add(new_product)
@@ -111,49 +112,88 @@ def delete_product(id):
         return jsonify({'error': 'Product not found or you do not have permission to update it'}), 403
 
 # This api is for placing order
-@bp.route('place_orders', methods=['POST'])
+@bp.route('place_order', methods=['POST'])
 @jwt_required()
 def place_order():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if user.role == 'buyer':
-        data = request.get_json()
-        order = Order(
-            product_id = data['product_id'],
-            quantity = data['quantity'],
-            buyer_id = user.id
-        )
-        db.session.add(order)
+        cart_items = CartItem.query.filter_by(buyer_id =user_id).all() # here query is done on CartItem table to get all the items from the particular user cart.
+        if not cart_items:
+            return jsonify({"message": "Your cart is empty. Cannot place an order."}), 400
+        
+        orders = []
+        for cart_item in cart_items:
+            product = Product.query.get(cart_item.product_id)
+
+            if product.stock < cart_item.quantity: # here it is checked wheather the given product quantity is greater than the product stock and if it is the api will stop and show the given error massage.
+                return jsonify({
+                    "error": f"Insufficient stock for product ID {product.id}. Cannot place the order."
+                }), 400
+
+            product.stock -= cart_item.quantity # here one item quantity is deducted from the product stock.
+            order = Order(
+                product_id = cart_item.product_id,
+                quantity = cart_item.quantity,
+                total_price=product.price * cart_item.quantity,
+                buyer_id = user.id
+            )
+            db.session.add(order)
+            orders.append(order)
+        CartItem.query.filter_by(buyer_id=user_id).delete() # after adding the order in order table it is removing all the items from the cart of the user.
         db.session.commit()
-        return jsonify({"msg": "Order placed successfully"}), 201
+        return jsonify({"msg": "Order placed successfully", "orders": [{
+            "order_id": order.id, 
+            "product_id": order.product_id,
+            "quantity": order.quantity,
+            "buyer_id": order.buyer_id,
+            "total_price": order.total_price
+            } for order in orders
+            ]
+        }), 201
     else:
         return jsonify({"msg": "Unauthorized: Only buyers can place orders"}), 403
 
-# This api is to get list of order for seller product
+# # This api is to get list of order for seller product
 @bp.route('get_order', methods=['GET'])
 @jwt_required()
 def get_order():
     user_id = get_jwt_identity()
-    products = Product.query.filter_by(seller_id = user_id).all()
-    if not products:
-        return jsonify({"message": "No products found for this seller"}), 404
-    all_orders = []
-    for product in products:
-        orders = Order.query.filter_by(product_id=product.id).all()
-        for order in orders:
-            all_orders.append(order.to_dict())
-    return jsonify(all_orders)
+    user = User.query.get(user_id)
+    if user.role == 'seller':
+
+        products = Product.query.filter_by(seller_id = user_id).all()
+        if not products:
+            return jsonify({"message": "No products found for this seller"}), 404
+        all_orders = []
+        for product in products:
+            orders = Order.query.filter_by(product_id=product.id).all()
+            for order in orders:
+                all_orders.append({"order_id": order.id,
+                    "product_id": order.product_id,
+                    "buyer_id": order.buyer_id,
+                    "quantity": order.quantity,
+                    "total_price": order.total_price,
+                    "placed_at": order.placed_at.strftime("%Y-%m-%d %H:%M:%S") })
+        return jsonify(all_orders)
+    else:
+        return jsonify({"message": "Access denied: Buyers cannot view order list."}), 403
 
 # This api to add product to cart in which I am providing the product id in url only
 @bp.route('add_to_cart/<int:product_id>', methods=['POST'])
 @jwt_required()
 def add_to_cart(product_id):
-    user_id = get_jwt_identity()
+    user_id = get_jwt_identity() # here I am getting the user_id which I have given as identity while creating access token
     data = request.get_json()
-
     quantity = data.get('quantity')
-    if not product_id or quantity <= 0:
+
+    if not product_id or quantity <= 0: 
         return jsonify({"message": "Invalid data"}), 400
+    
+    product = Product.query.get(product_id)
+    if product.stock < quantity:
+        return jsonify({"error": "Insufficient stock available"}), 400
+
     cart_item = CartItem.query.filter_by(buyer_id = user_id, product_id= product_id).first()
     if cart_item:
         cart_item.quantity += quantity
@@ -188,18 +228,67 @@ def get_buyer_item():
     for item in buyer_cart_items:
         cart_items.append({
             'product_id': item.product_id,
-            'quantity': item.quantity
+            'quantity': item.quantity,
+            'buyer_id': item.buyer_id
         })
 
     return jsonify(cart_items), 200
 
 
 # this api is to delete cart item from cart
-# @bp.route('delete_item/<int:product_id>', methods=['DELETE'])
-# @jwt_required()
-# def delete_item(product_id):
-#     user_id = get_jwt_identity()
-#     user =User.query.get(user_id)
-#     if user.role !='buyer':
-#         return jsonify({"message": "Access denied: Sellers cannot delete cart items."}), 403
+@bp.route('remove_item/<int:product_id>', methods=['DELETE'])
+@jwt_required()
+def remove_item(product_id):
+    user_id = get_jwt_identity()
+    user =User.query.get(user_id)
+    if user.role !='buyer':
+        return jsonify({"message": "Access denied: Sellers cannot remove cart items."}), 403
+    cart_item = CartItem.query.filter_by(buyer_id=user_id, product_id=product_id).first()
+    if not cart_item:
+        return jsonify({"message": "Product not found in cart."}), 200
+
+    if cart_item.quantity > 1:
+        cart_item.quantity -= 1
+        db.session.commit()
+        return jsonify({'message': 'Product quantity decreased by 1', 'quantity': cart_item.quantity}), 200
+    else: 
+        db.session.delete(cart_item)
+        db.session.commit()
+        return jsonify({"message: Product removed from cart"})
+
+
+# this api is to buy the product directly without adding it to cart
+@bp.route('buy_now/<int:product_id>', methods=['POST'])
+@jwt_required()
+def buy_now(product_id):
+    user_id = get_jwt_identity()
+    user =User.query.get(user_id)
+    if user.role !='buyer':
+        return jsonify({"message": "Access denied: Sellers cannot place order."}), 403
+
+    data = request.get_json()
+    quantity= data.get('quantity')
+
+    product= Product.query.filter_by(id= product_id).first()
+    if not product:
+        return jsonify({'error': 'Product not found'}), 404
     
+    if product.stock < quantity:
+        return jsonify({"error": "Insufficient stock available"}), 400
+
+    new_order = Order(
+        buyer_id=user_id,
+        product_id=product_id,
+        quantity=quantity,
+        total_price=product.price * quantity
+    )
+    db.session.add(new_order)
+    product.stock -= quantity
+    db.session.commit()
+    return jsonify({
+        'message': 'Order placed successfully',
+        'order_id': new_order.id,
+        'product_id': product_id,
+        'quantity': quantity,
+        'total_price': new_order.total_price
+    }), 201
