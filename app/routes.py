@@ -1,4 +1,4 @@
-from .models import User, Product, Order, CartItem
+from .models import User, Product, Order, CartItem, Address
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
@@ -34,7 +34,7 @@ def login():
 
     if user and check_password_hash(user.password, password):
         access_token = create_access_token(identity=user.id)
-        return jsonify(access_token=access_token), 200
+        return jsonify(access_token=access_token, role= user.role), 200
     else:
         return jsonify({"msg": "Bad username or password"}), 401
 
@@ -109,7 +109,7 @@ def delete_product(id):
         db.session.commit()
         return jsonify({'message': 'Product deleted successfully'}), 200
     else:
-        return jsonify({'error': 'Product not found or you do not have permission to update it'}), 403
+        return jsonify({'error': 'Product not found or you do not have permission to delete it'}), 403
 
 # This api is for placing order
 @bp.route('place_order', methods=['POST'])
@@ -117,11 +117,18 @@ def delete_product(id):
 def place_order():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
+    data = request.get_json()
+    address_id = data.get('address_id')
     if user.role == 'buyer':
         cart_items = CartItem.query.filter_by(buyer_id =user_id).all() # here query is done on CartItem table to get all the items from the particular user cart.
         if not cart_items:
             return jsonify({"message": "Your cart is empty. Cannot place an order."}), 400
         
+        address = Address.query.filter_by(id=address_id, buyer_id=user_id).first() # here query is done on Address table in which I am comparing the address_id and buyer_id with the address_id which is provided in request and user who loged.
+
+        if not address:
+            return jsonify({"error": "Address not found or does not belong to the buyer"}), 403
+
         orders = []
         for cart_item in cart_items:
             product = Product.query.get(cart_item.product_id)
@@ -136,7 +143,8 @@ def place_order():
                 product_id = cart_item.product_id,
                 quantity = cart_item.quantity,
                 total_price=product.price * cart_item.quantity,
-                buyer_id = user.id
+                buyer_id = user.id,
+                address_id = address_id
             )
             db.session.add(order)
             orders.append(order)
@@ -147,7 +155,9 @@ def place_order():
             "product_id": order.product_id,
             "quantity": order.quantity,
             "buyer_id": order.buyer_id,
-            "total_price": order.total_price
+            "total_price": order.total_price,
+            "placed_at": order.placed_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "address_id": order.address_id
             } for order in orders
             ]
         }), 201
@@ -173,8 +183,8 @@ def get_order():
                     "product_id": order.product_id,
                     "buyer_id": order.buyer_id,
                     "quantity": order.quantity,
-                    "total_price": order.total_price,
-                    "placed_at": order.placed_at.strftime("%Y-%m-%d %H:%M:%S") })
+                    "total_price": order.total_price
+                })
         return jsonify(all_orders)
     else:
         return jsonify({"message": "Access denied: Buyers cannot view order list."}), 403
@@ -207,7 +217,8 @@ def add_to_cart(product_id):
         "id": cart_item.id,
         "product_id": cart_item.product_id,
         "buyer_id": cart_item.buyer_id,
-        "quantity": cart_item.quantity
+        "quantity": cart_item.quantity,
+        "price" : product.price
         }
     }), 200
 
@@ -229,7 +240,8 @@ def get_buyer_item():
         cart_items.append({
             'product_id': item.product_id,
             'quantity': item.quantity,
-            'buyer_id': item.buyer_id
+            'buyer_id': item.buyer_id,
+            'price': item.price
         })
 
     return jsonify(cart_items), 200
@@ -268,19 +280,25 @@ def buy_now(product_id):
 
     data = request.get_json()
     quantity= data.get('quantity')
+    address_id = data.get('address_id')
 
-    product= Product.query.filter_by(id= product_id).first()
+    product= Product.query.filter_by(id= product_id).first() # here query is done on Product table where id is compared with the provided product_id in url.
     if not product:
         return jsonify({'error': 'Product not found'}), 404
     
     if product.stock < quantity:
         return jsonify({"error": "Insufficient stock available"}), 400
+    
+    address = Address.query.filter_by(id=address_id, buyer_id=user_id).first() # here query is done on Address table in which I am comparing the address_id and buyer_id with the address_id which is provided in request and user who loged.
+    if not address:
+        return jsonify({"error": "Address not found or does not belong to the buyer"}), 403
 
     new_order = Order(
         buyer_id=user_id,
         product_id=product_id,
         quantity=quantity,
-        total_price=product.price * quantity
+        total_price=product.price * quantity,
+        address_id =address_id
     )
     db.session.add(new_order)
     product.stock -= quantity
@@ -290,5 +308,96 @@ def buy_now(product_id):
         'order_id': new_order.id,
         'product_id': product_id,
         'quantity': quantity,
-        'total_price': new_order.total_price
+        'total_price': new_order.total_price,
+        'address':new_order.address_id
     }), 201
+
+# this api to create address 
+@bp.route('create_address', methods=['POST'])
+@jwt_required()
+def create_address():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if user.role !='buyer':
+        return jsonify({"message": "Access denied: Sellers cannot create address."}), 403
+    data = request.get_json()
+    country = data.get('country')
+    address_line1 = data.get('address_line1')
+    address_line2 = data.get('address_line2')
+    landmark = data.get('landmark')
+    pincode = data.get('pincode')
+    city = data.get('city')
+    state = data.get('state')
+    is_default = data.get('is_default')
+    if not country or not address_line1 or not pincode or not city or not state:
+        return jsonify({'message': 'Missing required fields'}), 400
+    
+    new_address = Address(
+        buyer_id=user_id,
+        country=country,
+        address_line1 = address_line1,
+        address_line2 = address_line2,
+        landmark=landmark,
+        pincode=pincode,
+        city=city,
+        state=state,
+        is_default=is_default
+    )
+    db.session.add(new_address)
+    db.session.commit()
+    
+    return jsonify({'message': 'Address created successfully',
+        'buyer_id': new_address.buyer_id,
+        'country': new_address.country,
+        'address_line1':new_address.address_line1,
+        'address_line2': new_address.address_line2,
+        'landmark': new_address.landmark,
+        'pincode': new_address.pincode,
+        'city': new_address.city,
+        'state': new_address.state,
+    }), 201
+
+# this api is to update address of the buyer where the product will be delivered
+@bp.route('update_address/<int:address_id>', methods=['PUT'])
+@jwt_required()
+def update_address(address_id):
+    user_id = get_jwt_identity()
+    address = Address.query.get(address_id)
+
+    if address and address.buyer_id == user_id:
+        data= request.get_json()
+
+        address.country = data.get('country', address.country)
+        address.address_line1 = data.get('address_line1', address.address_line1)
+        address.address_line2 = data.get('address_line2', address.address_line2)
+        address.landmark = data.get('landmark', address.landmark)
+        address.pincode = data.get('pincode', address.pincode)
+        address.city = data.get('city', address.city)
+        address.state = data.get('state', address.state)
+        address.is_default = data.get('is_default', address.is_default)
+        db.session.commit()
+        return jsonify({'message': 'Address updated successfully',
+                        'country': address.country,
+                        'address_line1': address.address_line1,
+                        'address_line2': address.address_line2,
+                        'landmark': address.landmark,
+                        'pincode':address.pincode,
+                        'city': address.city,
+                        'state': address.state,
+                        'is_default':address.is_default}), 200
+    else:
+        return jsonify({'error': 'Address not found or you do not have permission to update it'}), 403
+
+# this api is to delete the address
+@bp.route('delete_address/<int:address_id>', methods=['DELETE'])
+@jwt_required()
+def delete_address(address_id):
+    user_id = get_jwt_identity()
+    address=Address.query.get(address_id)
+    if address and address.buyer_id == user_id:
+        db.session.delete(address)
+        db.session.commit()
+        return jsonify({'message': 'Address deleted successfully'}), 200
+    else:
+        return jsonify({'error': 'Address not found or you do not have permission to delete it'}), 403
+
