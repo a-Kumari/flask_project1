@@ -1,5 +1,6 @@
 from app import db
 import datetime
+from sqlalchemy import JSON
 
 
 class User(db.Model):
@@ -11,9 +12,26 @@ class User(db.Model):
 
 
     __table_args__ = (
-        db.CheckConstraint("role IN ('buyer', 'seller')"),
+        db.CheckConstraint("role IN ('buyer', 'seller', 'admin')"),
     )
-    
+
+class Category(db.Model):
+    id = db.Column(db.Integer, primary_key = True, index=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+
+    def __repr__(self):
+        return f'<Category {self.name}>'
+
+
+class SubCategory(db.Model):
+    __tablename__= "subcategory"
+    id = db.Column(db.Integer, primary_key = True, index=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
+
+    def __repr__(self):
+        return f'<SubCategory {self.name}>'
+
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True, index=True)
     name= db.Column(db.String, nullable=False)
@@ -21,14 +39,9 @@ class Product(db.Model):
     price = db.Column(db.Float, nullable=False)
     seller_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     stock = db.Column(db.Integer, nullable=True)
+    subcategory_id = db.Column(db.Integer, db.ForeignKey('subcategory.id'), nullable=False)
+    tags = db.Column(JSON, nullable=False)
 
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-            'desc': self.desc,
-            'price': self.price
-        }
 
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True, index=True)
@@ -36,7 +49,8 @@ class Order(db.Model):
     buyer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     placed_at = db.Column(db.DateTime, default=datetime.datetime.now)
     quantity = db.Column(db.Integer, nullable=False)
-    total_price = db.Column(db.Float, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    total_price = db.Column(db.Float, nullable=True)
     address_id = db.Column(db.Integer, db.ForeignKey('address.id'), nullable=False)
 
 
@@ -50,7 +64,7 @@ class CartItem(db. Model):
     quantity = db.Column(db.Integer, nullable=False)
 
     def __repr__(self):
-        return f'<Order {self.id}>'
+        return f'<CartItem {self.id}>'
     
 class Address(db.Model):
     id = db.Column(db.Integer, primary_key = True, index=True)
@@ -65,8 +79,25 @@ class Address(db.Model):
     is_default = db.Column(db.Boolean, default=False, nullable=False)
 
     def __repr__(self):
-        return f'<Order {self.buyer_id}>'
+        return f'<Address {self.buyer_id}>'
 
 
 
 
+class Discount(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
+    discount = db.Column(db.Integer, nullable=False)  
+    is_active = db.Column(db.Boolean, nullable=False)
+    start_date = db.Column(db.DateTime, default=datetime.datetime.now)
+    end_date = db.Column(db.DateTime, nullable=True)
+   
+    def __repr__(self):
+        return f'<Discount {self.discount}>'
+
+class Receipt(db.Model):
+    id = db.Column(db.Integer, primary_key=True, index=True)
+    receipt_id = db.Column(db.String, nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
+    generated_at = db.Column(db.DateTime, default=datetime.datetime.now)
